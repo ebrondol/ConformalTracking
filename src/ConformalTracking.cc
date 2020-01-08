@@ -139,9 +139,27 @@ void ConformalTracking::registerParameters() {
                              m_minClustersOnTrackAfterFit, int(4));
   registerProcessorParameter("MaxHitInvertedFit", "Maximum number of track hits to try the inverted fit", m_maxHitsInvFit,
                              int(0));
+
+  // Parameters to search in neighbours detectors
+  StringVec vecSubdetNameDefault;
+  vecSubdetNameDefault.push_back("VertexBarrel") ;
+  //ERICA:VertexEndcap is not set yet
+  //vecSubdetNameDefault.push_back("VertexEndcap") ;
+  vecSubdetNameDefault.push_back("InnerTrackerBarrel") ;
+  vecSubdetNameDefault.push_back("OuterTrackerBarrel") ;
+  vecSubdetNameDefault.push_back("InnerTrackerEndcap") ;
+  vecSubdetNameDefault.push_back("OuterTrackerEndcap") ;
+
+  registerProcessorParameter( "vecSubdetName" ,
+                              "vector of names of all subdetector to exrapolate to" ,
+                              _vecSubdetName ,
+                              vecSubdetNameDefault );
+
 }
 
 void ConformalTracking::init() {
+  getGeoInfo();
+
   // Print the initial parameters
   printParameters();
 
@@ -314,6 +332,34 @@ void ConformalTracking::parseStepParameters() {
   _stepParameters.push_back(displacedParameters);
 }
 
+//
+void ConformalTracking::getGeoInfo() {
+  std::cout << "ConformalTracking::getGeoInfo" << std::endl;
+
+  _vecMapNeighbours.clear();
+
+  dd4hep::Detector & mainDetector = dd4hep::Detector::getInstance();
+
+  for ( auto subdetName : _vecSubdetName){
+    std::cout << subdetName << std::endl;
+
+    try{
+
+      const dd4hep::DetElement& theDetector = mainDetector.detector(subdetName);
+      dd4hep::rec::NeighbourSurfacesData *neighbourSurfaces = 0;
+      neighbourSurfaces = theDetector.extension<dd4hep::rec::NeighbourSurfacesData>();
+      _vecMapNeighbours.push_back(&(neighbourSurfaces->sameLayer));
+
+    } catch (std::runtime_error &exception){
+
+      streamlog_out(WARNING) << "ConformalTracking::getGeoInfo - exception in retriving number of modules per layer for subdetector : "<< subdetName <<" : " << exception.what() << std::endl;
+
+    }
+
+  }
+
+}
+
 // The main code, run over each event
 void ConformalTracking::processEvent(LCEvent* evt) {
   //------------------------------------------------------------------------------------------------------------------
@@ -428,7 +474,7 @@ void ConformalTracking::processEvent(LCEvent* evt) {
       auto kdhit = std::make_shared<KDCluster>(hit, isEndcap, forward);
 
       // Set the subdetector information
-      kdhit->setDetectorInfo(subdet, side, layer, module, sensor);
+      kdhit->setDetectorInfo(celId, subdet, side, layer, module, sensor);
 
       // Store the link between the two
       kdClusterMap[kdhit] = hit;
@@ -922,7 +968,7 @@ void ConformalTracking::combineCollections(SharedKDClusters& kdClusters, UKDTree
 void ConformalTracking::buildNewTracks(UniqueKDTracks& conformalTracks, SharedKDClusters& collection,
                                        UKDTree& nearestNeighbours, Parameters const& parameters, bool radialSearch,
                                        bool vertexToTracker) {
-  streamlog_out(DEBUG9) << "*** buildNewTracks" << std::endl;
+  //std::cout << "*** buildNewTracks" << std::endl;
 
   // Sort the input collection by radius - higher to lower if starting with the vertex detector (high R in conformal space)
   std::sort(collection.begin(), collection.end(), (vertexToTracker ? sort_by_radiusKD : sort_by_lower_radiusKD));
@@ -977,7 +1023,8 @@ void ConformalTracking::buildNewTracks(UniqueKDTracks& conformalTracks, SharedKD
             if (nhit->used())
               return true;
             if (kdhit->sameLayer(nhit))
-              return true;
+              if (fabs(kdhit->getSensor() - nhit->getSensor()) > 1)
+                return true;
             //not pointing in the same direction
             if (nhit->endcap() && kdhit->endcap() && (nhit->forward() != kdhit->forward()))
               return true;
@@ -992,7 +1039,8 @@ void ConformalTracking::buildNewTracks(UniqueKDTracks& conformalTracks, SharedKD
             if (nhit->used())
               return true;
             if (kdhit->sameLayer(nhit))
-              return true;
+              if (fabs(kdhit->getSensor() - nhit->getSensor()) > 1)
+                return true;
             //not pointing in the same direction
             if (nhit->endcap() && kdhit->endcap() && (nhit->forward() != kdhit->forward()))
               return true;
@@ -1035,6 +1083,10 @@ void ConformalTracking::buildNewTracks(UniqueKDTracks& conformalTracks, SharedKD
         continue;
       }
 
+      //if (kdhit->sameLayer(nhit)){
+      //  std::cout << "Module : kdhit  = " << kdhit->getModule() << ", nhit  = " << nhit->getModule() << std::endl;
+      //  std::cout << "Sensor : kdhit  = " << kdhit->getSensor() << ", nhit  = " << nhit->getSensor() << std::endl;
+      //}
       // Check if the cell would be too long (hit very far away)
       double length2 = ((kdhit->getU() - nhit->getU()) * (kdhit->getU() - nhit->getU()) +
                         (kdhit->getV() - nhit->getV()) * (kdhit->getV() - nhit->getV()));
@@ -1557,7 +1609,8 @@ void ConformalTracking::extendTracks(UniqueKDTracks& conformalTracks, SharedKDCl
 void ConformalTracking::extendSeedCells(SharedCells& cells, UKDTree& nearestNeighbours, bool extendingTrack,
                                         const SharedKDClusters& /*debugHits*/, Parameters const& parameters,
                                         bool vertexToTracker) {
-  streamlog_out(DEBUG8) << "***** extendSeedCells" << std::endl;
+  //std::cout << "***** extendSeedCells" << std::endl;
+  UTIL::BitField64 m_encoder(lcio::LCTrackerCellID::encoding_string());
 
   unsigned int nCells   = 0;
   int          depth    = 0;
@@ -1592,8 +1645,9 @@ void ConformalTracking::extendSeedCells(SharedCells& cells, UKDTree& nearestNeig
           fakeHit, 0.625 * searchDistance, results, [&hit, vertexToTracker](SKDCluster const& nhit) {
             if (nhit->used())
               return true;
-            if (hit->sameLayer(nhit))
-              return true;
+            //if (nhit->sameModule(hit))
+            //  if (fabs(nhit->getSensor() - hit->getSensor()) != 1)
+            //    return true;
             if (nhit->endcap() && hit->endcap() && (nhit->forward() != hit->forward()))
               return true;
             if ((vertexToTracker && nhit->getR() >= hit->getR()) || (!vertexToTracker && nhit->getR() <= hit->getR()))
@@ -1601,7 +1655,7 @@ void ConformalTracking::extendSeedCells(SharedCells& cells, UKDTree& nearestNeig
             return false;
           });
 
-      streamlog_out(DEBUG8) << "- Found " << results.size() << " neighbours from cell extrapolation " << std::endl;
+      //std::cout << "- Found " << results.size() << " neighbours from cell extrapolation " << std::endl;
       if (extendingTrack) {
         streamlog_out(DEBUG7) << "Extrapolating cell " << itCell << " from u,v: " << hit->getU() << "," << hit->getV()
                               << std::endl;
@@ -1609,10 +1663,61 @@ void ConformalTracking::extendSeedCells(SharedCells& cells, UKDTree& nearestNeig
         streamlog_out(DEBUG7) << "Found " << results.size() << " neighbours from cell extrapolation" << std::endl;
       }
 
+
+      std::cout << "Hit cellId  = " << hit->getCellId() << std::endl;
+      std::cout << "Hit " << hit << std::endl;
+      std::vector<dd4hep::long64 > vecIDs;
+      const int celId = hit->getCellId();
+      m_encoder.setValue(celId);
+      std::cout << "Subdet = " << m_encoder[lcio::LCTrackerCellID::subdet()] << "; Side = " << m_encoder[lcio::LCTrackerCellID::side()] << "; Layer = " << m_encoder[lcio::LCTrackerCellID::layer()]
+                << "; Module = " << m_encoder[lcio::LCTrackerCellID::module()] << "; Sensor =  " << m_encoder[lcio::LCTrackerCellID::sensor()] << std::endl;
+
+      //ERICA : maybe can be found a way to use getSubdetector??
+      for (size_t idet=0; idet<_vecSubdetName.size(); idet++){
+
+        std::vector<dd4hep::long64 > vecIDs_subdet;
+        vecIDs_subdet = _vecMapNeighbours.at(idet)->find(hit->getCellId())->second;
+        vecIDs.insert(vecIDs.end(), vecIDs_subdet.begin(), vecIDs_subdet.end());
+
+        std::cout << "vecIDs size = " << vecIDs_subdet.size() << " for subdet " << _vecSubdetName.at(idet) << std::endl;
+        if (!vecIDs_subdet.empty()){
+          std::cout << "Elements : "<< std::endl;
+          for ( auto vecID : vecIDs_subdet ){
+            std::cout << "  " << vecID << std::endl; 
+            m_encoder.setValue(vecID);
+            std::cout << "Subdet = " << m_encoder[lcio::LCTrackerCellID::subdet()] << "; Side = " << m_encoder[lcio::LCTrackerCellID::side()] << "; Layer = " << m_encoder[lcio::LCTrackerCellID::layer()]
+                      << "; Module = " << m_encoder[lcio::LCTrackerCellID::module()] << "; Sensor =  " << m_encoder[lcio::LCTrackerCellID::sensor()] << std::endl;
+          }
+        }
+
+      }
+      std::cout << "vecIDs size = " << vecIDs.size() << std::endl;
+
       // Make new cells pointing inwards
       for (unsigned int neighbour = 0; neighbour < results.size(); neighbour++) {
         // Get the neighbouring hit
         SKDCluster const& nhit = results[neighbour];
+
+        std::cout << "Nhit cellId = " << nhit->getCellId() << std::endl;
+        m_encoder.setValue(nhit->getCellId());
+        std::cout << "Subdet = " << m_encoder[lcio::LCTrackerCellID::subdet()] << "; Side = " << m_encoder[lcio::LCTrackerCellID::side()] << "; Layer = " << m_encoder[lcio::LCTrackerCellID::layer()]
+                  << "; Module = " << m_encoder[lcio::LCTrackerCellID::module()] << "; Sensor =  " << m_encoder[lcio::LCTrackerCellID::sensor()] << std::endl;
+
+        //In case of same layer, keep nhit only if it is in a neighbour det or same det
+        if (hit->sameLayer(nhit)){
+          std::cout << "Same layer !" << std::endl;
+          std::cout << "Module : hit  = " << hit->getModule() << ", nhit  = " << nhit->getModule() << std::endl;
+          std::cout << "Sensor : hit  = " << hit->getSensor() << ", nhit  = " << nhit->getSensor() << std::endl;
+          std::cout << "vecIDs size (again) = " << vecIDs.size() << std::endl;
+          if(std::find(vecIDs.begin(), vecIDs.end(), nhit->getCellId()) != vecIDs.end()){
+            std::cout << " Found it in det neighbour !" << std::endl;
+          } else if (hit->getCellId() == nhit->getCellId() ) {
+            std::cout << " Found it in same det !" << std::endl;
+          } else {
+            std::cout << " Too far from the hit ... skipping" << std::endl;
+            continue;
+          }
+        }
 
         streamlog_out(DEBUG8) << "-- Neighbour " << neighbour << ": [x,y] = [" << nhit->getX() << ", " << nhit->getY() << "]"
                               << std::endl;
@@ -1671,8 +1776,8 @@ void ConformalTracking::extendSeedCells(SharedCells& cells, UKDTree& nearestNeig
         // Make the new cell
         Cell cell(hit, nhit);
 
-        streamlog_out(DEBUG8) << "-- made new cell A ([x,y] = [" << hit->getX() << ", " << hit->getY() << "]) - B ([x,y] = ["
-                              << nhit->getX() << ", " << nhit->getY() << "]) " << std::endl;
+        //std::cout << "-- made new cell A ([x,y] = [" << hit->getX() << ", " << hit->getY() << "]) - B ([x,y] = ["
+        //                    << nhit->getX() << ", " << nhit->getY() << "]) " << std::endl;
         if (extendingTrack)
           streamlog_out(DEBUG7) << "- make new cell" << std::endl;
 
@@ -1693,6 +1798,8 @@ void ConformalTracking::extendSeedCells(SharedCells& cells, UKDTree& nearestNeig
 
           continue;
         }
+        //std::cout << "cell getAngle = " << cells[itCell]->getAngle(cell) << std::endl;
+        //std::cout << "cell getAngleRZ = " << cells[itCell]->getAngleRZ(cell) << std::endl;
 
         // Set the information about which cell this new cell is attached to and store it
         cells.emplace_back(std::make_shared<Cell>(std::move(cell)));
@@ -1722,6 +1829,7 @@ void ConformalTracking::extendSeedCells(SharedCells& cells, UKDTree& nearestNeig
 
 void ConformalTracking::extendHighPT(UniqueKDTracks& conformalTracks, SharedKDClusters& /*collection*/,
                                      UKDTree& nearestNeighbours, Parameters const& parameters, bool /*radialSearch*/) {
+  //std::cout << "ConformalTracking::extendHighPT for " << conformalTracks.size() << " conformalTracks. " << std::endl;
   // Set the cell angle criteria for high pt tracks
   Parameters highPTParameters(parameters);
   highPTParameters._maxCellAngle   = 0.005;
@@ -1812,6 +1920,8 @@ void ConformalTracking::extendHighPT(UniqueKDTracks& conformalTracks, SharedKDCl
         lowestChi2ndof  = chi2ndof;
         lowestChi2Track = std::move(extendedTrack);
       }
+//      std::cout << "Cell #" << i << " has chi2
+//      i++;
     }
 
     // If this is good enough then add it to the track
@@ -2162,7 +2272,7 @@ void ConformalTracking::extendTracksPerLayer(UniqueKDTracks& conformalTracks, Sh
 // on number of clusters on each track, and pass back (good tracks to then be decided based on best chi2
 void ConformalTracking::createTracksNew(UniqueCellularTracks& finalcellularTracks, SCell& seedCell,
                                         std::map<SCell, bool>& /*usedCells*/) {
-  streamlog_out(DEBUG8) << "***** createTracksNew" << std::endl;
+  //std::cout << "***** createTracksNew" << std::endl;
 
   // Final container to be returned
   UniqueCellularTracks cellularTracks;
@@ -2186,7 +2296,7 @@ void ConformalTracking::createTracksNew(UniqueCellularTracks& finalcellularTrack
     }
     if (nTracks > m_tooManyTracks) {
       streamlog_out(ERROR) << "Too many tracks (" << nTracks << " > " << m_tooManyTracks
-                           << " are going to be created, tightening parameters" << std::endl;
+                           << ") are going to be created, tightening parameters" << std::endl;
       throw TooManyTracksException(this);
     }
     for (int itTrack = 0; itTrack < nTracks; itTrack++) {
@@ -2757,6 +2867,7 @@ int ConformalTracking::getUniqueHits(SharedKDClusters hits) {
 void ConformalTracking::checkReconstructionFailure(MCParticle* particle,
                                                    std::map<MCParticle*, SharedKDClusters> particleHits,
                                                    UKDTree& nearestNeighbours, Parameters const& parameters) {
+  //std::cout << "ConformalTracking::checkReconstructionFailure" << std::endl;
   // Get the hits for this MC particle
   SharedKDClusters trackHits = particleHits[particle];
 
@@ -2999,7 +3110,7 @@ void ConformalTracking::runStep(SharedKDClusters& kdClusters, UKDTree& nearestNe
 
     stopwatch.Stop();
     if (m_debugTime)
-      streamlog_out(DEBUG9) << "Step " << parameters._step << " buildNewTracks took " << stopwatch.RealTime() << " seconds"
+      std::cout << "Step " << parameters._step << " buildNewTracks took " << stopwatch.RealTime() << " seconds"
                             << std::endl;
     stopwatch.Reset();
   }
@@ -3007,7 +3118,7 @@ void ConformalTracking::runStep(SharedKDClusters& kdClusters, UKDTree& nearestNe
     extendTracks(conformalTracks, kdClusters, nearestNeighbours, parameters);
     stopwatch.Stop();
     if (m_debugTime)
-      streamlog_out(DEBUG9) << "Step " << parameters._step << " extendTracks took " << stopwatch.RealTime() << " seconds"
+      std::cout << "Step " << parameters._step << " extendTracks took " << stopwatch.RealTime() << " seconds"
                             << std::endl;
     stopwatch.Reset();
   }

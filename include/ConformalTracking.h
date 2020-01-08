@@ -16,6 +16,7 @@
 #include "lcio.h"
 
 #include <MarlinTrk/IMarlinTrkSystem.h>
+#include "DD4hep/Detector.h"
 
 #include <TCanvas.h>
 #include <TH1F.h>
@@ -40,6 +41,8 @@ public:
 
   // Initialisation - run at the beginning to start histograms, etc.
   virtual void init();
+
+  void getGeoInfo();
 
   // Register input collections and parameters
   void registerParameters();
@@ -111,6 +114,8 @@ public:
 
 protected:
   std::vector<Parameters> _stepParameters{};
+  StringVec _vecSubdetName {};
+  std::vector<std::map<dd4hep::long64 , std::vector<dd4hep::long64 > >* >  _vecMapNeighbours {};
 
   // Collection names for (in/out)put
   std::vector<std::string> m_inputTrackerHitCollections{};

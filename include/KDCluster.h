@@ -149,7 +149,8 @@ public:
   void used(bool used) { m_used = used; }
 
   // Subdetector information
-  void setDetectorInfo(int subdet, int side, int layer, int module, int sensor) {
+  void setDetectorInfo(int cellId, int subdet, int side, int layer, int module, int sensor) {
+    m_cellId = cellId;
     m_subdet = subdet;
     m_side   = side;
     m_layer  = layer;
@@ -157,6 +158,7 @@ public:
     m_sensor = sensor;
   }
   int  getSubdetector() const { return m_subdet; }
+  int  getCellId() const { return m_cellId; }
   int  getSide() const { return m_side; }
   int  getLayer() const { return m_layer; }
   int  getModule() const { return m_module; }
@@ -169,6 +171,12 @@ public:
     if (kdhit->getSubdetector() == m_subdet && kdhit->getSide() == m_side && kdhit->getLayer() == m_layer)
       return true;
     return false;
+  }
+
+  // Check if another hit is on the same sensor of the same detecting layer
+  bool sameModule(std::shared_ptr<KDCluster> const& kdhit) const {
+    return kdhit->getLayer() == m_layer && kdhit->getSubdetector() == m_subdet && kdhit->getSide() == m_side &&
+           kdhit->getModule() == m_module;
   }
 
   // Check if another hit is on the same sensor of the same detecting layer
@@ -196,6 +204,7 @@ private:
   double m_errorZ    = 0.0;
   double m_errorS    = 0.0;
   double m_theta     = 0.0;
+  int    m_cellId    = 0;
   int    m_subdet    = 0;
   int    m_side      = 0;
   int    m_layer     = 0;
