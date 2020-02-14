@@ -1358,6 +1358,13 @@ void ConformalTracking::buildNewTracks(UniqueKDTracks& conformalTracks, SharedKD
       }
 
     }  // end for besttracks
+
+    // Mark hits from bestTrack as being used
+    for (auto& conformalTrack : conformalTracks) {
+      for (auto& thisCluster : conformalTrack->m_clusters)
+        thisCluster->used(true);
+    }
+    
     if (m_debugTime)
       streamlog_out(DEBUG7) << "  Time report: Sort best tracks took " << stopwatch_hit.RealTime() * 1000 << std::scientific
                             << " milli-seconds" << std::endl;
@@ -2999,7 +3006,7 @@ void ConformalTracking::runStep(SharedKDClusters& kdClusters, UKDTree& nearestNe
 
     stopwatch.Stop();
     if (m_debugTime)
-      streamlog_out(DEBUG9) << "Step " << parameters._step << " buildNewTracks took " << stopwatch.RealTime() << " seconds"
+      std::cout << "Step " << parameters._step << " buildNewTracks took " << stopwatch.RealTime() << " seconds"
                             << std::endl;
     stopwatch.Reset();
   }
@@ -3007,7 +3014,7 @@ void ConformalTracking::runStep(SharedKDClusters& kdClusters, UKDTree& nearestNe
     extendTracks(conformalTracks, kdClusters, nearestNeighbours, parameters);
     stopwatch.Stop();
     if (m_debugTime)
-      streamlog_out(DEBUG9) << "Step " << parameters._step << " extendTracks took " << stopwatch.RealTime() << " seconds"
+      std::cout << "Step " << parameters._step << " extendTracks took " << stopwatch.RealTime() << " seconds"
                             << std::endl;
     stopwatch.Reset();
   }
